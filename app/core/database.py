@@ -9,10 +9,11 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 # Handle case where DATABASE_URL might not be set (for local development)
 if DATABASE_URL:
-    # Supabase sometimes uses 'postgres://' which SQLAlchemy doesn't accept
-    # Replace with 'postgresql://' if needed
+    # Normalize the URL prefix for SQLAlchemy
     if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+pg8000://", 1)
+    elif DATABASE_URL.startswith("postgresql://") and "+pg8000" not in DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+pg8000://", 1)
 
     engine = create_engine(DATABASE_URL, pool_pre_ping=True)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

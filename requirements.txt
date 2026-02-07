@@ -3,4 +3,4 @@ uvicorn
 pysolar
 pytz
 sqlalchemy
-psycopg2-binary
+pg8000
