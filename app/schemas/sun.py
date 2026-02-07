@@ -29,9 +29,19 @@ class MeasurementRequest(BaseModel):
 
     latitude: float = Field(..., ge=-90, le=90, description="Latitude in degrees")
     longitude: float = Field(..., ge=-180, le=180, description="Longitude in degrees")
-    device_azimuth: float = Field(..., ge=0, le=360, description="Device measured azimuth (0-360)")
+    device_azimuth: float = Field(..., ge=0, le=360, description="Device measured azimuth (0-360, True North)")
     device_altitude: float = Field(..., ge=-90, le=90, description="Device measured altitude (-90 to 90)")
     device_id: str = Field(..., min_length=1, description="Anonymous device identifier for rate limiting")
+    magnetic_azimuth: float | None = Field(
+        default=None,
+        ge=0,
+        le=360,
+        description="Raw magnetic compass azimuth before declination correction (0-360)",
+    )
+    magnetic_declination: float | None = Field(
+        default=None,
+        description="Magnetic declination applied (positive = east, negative = west)",
+    )
     timestamp: datetime | None = Field(
         default=None,
         description="Timestamp for calculation (defaults to current UTC time)",
@@ -49,9 +59,13 @@ class MeasurementResponse(BaseModel):
     latitude: float
     longitude: float
 
-    # Device readings
+    # Device readings (True North corrected)
     device_azimuth: float
     device_altitude: float
+
+    # Raw magnetic readings (before declination correction)
+    magnetic_azimuth: float | None = None
+    magnetic_declination: float | None = None
 
     # Calculated NASA/Pysolar values
     nasa_azimuth: float
