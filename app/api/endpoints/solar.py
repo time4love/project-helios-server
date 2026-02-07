@@ -1,7 +1,8 @@
 """Solar position calculation endpoints."""
 
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import List
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
 from app.core.database import get_supabase
@@ -122,6 +123,7 @@ def save_measurement(
     return MeasurementResponse(
         id=saved["id"],
         created_at=saved["created_at"],
+        device_id=saved.get("device_id"),
         latitude=saved["latitude"],
         longitude=saved["longitude"],
         device_azimuth=saved["device_azimuth"],
@@ -131,3 +133,41 @@ def save_measurement(
         delta_azimuth=saved["delta_azimuth"],
         delta_altitude=saved["delta_altitude"],
     )
+
+
+@router.get("/measurements", response_model=List[MeasurementResponse])
+def get_measurements(
+    limit: int = Query(default=100, ge=1, le=1000, description="Max number of measurements to return"),
+    supabase: Client = Depends(get_supabase)
+) -> List[MeasurementResponse]:
+    """
+    Retrieve recent measurements for visualization.
+
+    - **limit**: Maximum number of measurements to return (default: 100, max: 1000)
+
+    Returns measurements ordered by created_at descending (most recent first).
+    """
+    response = (
+        supabase.table("measurements")
+        .select("*")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+
+    return [
+        MeasurementResponse(
+            id=row["id"],
+            created_at=row["created_at"],
+            device_id=row.get("device_id"),
+            latitude=row["latitude"],
+            longitude=row["longitude"],
+            device_azimuth=row["device_azimuth"],
+            device_altitude=row["device_altitude"],
+            nasa_azimuth=row["nasa_azimuth"],
+            nasa_altitude=row["nasa_altitude"],
+            delta_azimuth=row["delta_azimuth"],
+            delta_altitude=row["delta_altitude"],
+        )
+        for row in response.data
+    ]

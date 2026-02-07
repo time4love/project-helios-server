@@ -43,6 +43,7 @@ class MeasurementResponse(BaseModel):
 
     id: int = Field(..., description="Database ID of the saved measurement")
     created_at: str = Field(..., description="Timestamp when measurement was saved (ISO format)")
+    device_id: str | None = Field(None, description="Anonymous device identifier")
 
     # Location
     latitude: float
