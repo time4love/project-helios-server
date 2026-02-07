@@ -60,3 +60,21 @@ class MeasurementResponse(BaseModel):
     # Deltas (device - nasa)
     delta_azimuth: float
     delta_altitude: float
+
+
+class StatsResponse(BaseModel):
+    """Response model for measurement statistics."""
+
+    count: int = Field(..., description="Total number of measurements")
+    avg_delta_azimuth: float | None = Field(
+        None, description="Average delta azimuth in degrees"
+    )
+    avg_delta_altitude: float | None = Field(
+        None, description="Average delta altitude in degrees"
+    )
+    std_dev_azimuth: float | None = Field(
+        None, description="Standard deviation of delta azimuth"
+    )
+    std_dev_altitude: float | None = Field(
+        None, description="Standard deviation of delta altitude"
+    )

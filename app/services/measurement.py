@@ -1,11 +1,14 @@
 """Measurement service layer for business logic separation."""
 
+import csv
+import io
+import statistics
 from datetime import date, datetime, timezone
 from typing import List
 
 from supabase import Client
 
-from app.schemas.sun import MeasurementRequest, MeasurementResponse
+from app.schemas.sun import MeasurementRequest, MeasurementResponse, StatsResponse
 from app.services.astronomy import calculate_sun_position
 
 
@@ -146,7 +149,7 @@ class MeasurementService:
         Retrieve measurements for a specific date.
 
         Args:
-            target_date: Date to filter by (defaults to today)
+            target_date: Date to filter by (defaults to today if None)
             limit: Maximum number of measurements to return
 
         Returns:
@@ -169,3 +172,104 @@ class MeasurementService:
         )
 
         return [_row_to_response(row) for row in response.data]
+
+    def get_stats_by_date(self, target_date: date | None = None) -> StatsResponse:
+        """
+        Calculate statistics for measurements on a specific date.
+
+        Args:
+            target_date: Date to calculate stats for (defaults to today)
+
+        Returns:
+            Statistics including count, averages, and standard deviations
+        """
+        filter_date = target_date or date.today()
+
+        start_of_day = f"{filter_date}T00:00:00Z"
+        end_of_day = f"{filter_date}T23:59:59.999999Z"
+
+        response = (
+            self.supabase.table("measurements")
+            .select("delta_azimuth, delta_altitude")
+            .gte("created_at", start_of_day)
+            .lte("created_at", end_of_day)
+            .execute()
+        )
+
+        rows = response.data
+        count = len(rows)
+
+        if count == 0:
+            return StatsResponse(
+                count=0,
+                avg_delta_azimuth=None,
+                avg_delta_altitude=None,
+                std_dev_azimuth=None,
+                std_dev_altitude=None,
+            )
+
+        delta_azimuths = [row["delta_azimuth"] for row in rows]
+        delta_altitudes = [row["delta_altitude"] for row in rows]
+
+        avg_az = statistics.mean(delta_azimuths)
+        avg_alt = statistics.mean(delta_altitudes)
+
+        # Standard deviation requires at least 2 data points
+        std_az = statistics.stdev(delta_azimuths) if count >= 2 else 0.0
+        std_alt = statistics.stdev(delta_altitudes) if count >= 2 else 0.0
+
+        return StatsResponse(
+            count=count,
+            avg_delta_azimuth=round(avg_az, 4),
+            avg_delta_altitude=round(avg_alt, 4),
+            std_dev_azimuth=round(std_az, 4),
+            std_dev_altitude=round(std_alt, 4),
+        )
+
+    def export_csv_by_date(self, target_date: date | None = None) -> str:
+        """
+        Export measurements as CSV string.
+
+        Args:
+            target_date: Date to export (defaults to today)
+
+        Returns:
+            CSV formatted string of measurements
+        """
+        measurements = self.get_measurements_by_date(target_date=target_date, limit=10000)
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header row
+        writer.writerow([
+            "id",
+            "created_at",
+            "device_id",
+            "latitude",
+            "longitude",
+            "device_azimuth",
+            "device_altitude",
+            "nasa_azimuth",
+            "nasa_altitude",
+            "delta_azimuth",
+            "delta_altitude",
+        ])
+
+        # Data rows
+        for m in measurements:
+            writer.writerow([
+                m.id,
+                m.created_at,
+                m.device_id or "",
+                m.latitude,
+                m.longitude,
+                m.device_azimuth,
+                m.device_altitude,
+                m.nasa_azimuth,
+                m.nasa_altitude,
+                m.delta_azimuth,
+                m.delta_altitude,
+            ])
+
+        return output.getvalue()

@@ -4,6 +4,7 @@ from datetime import date
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from supabase import Client
 
 from app.core.database import get_supabase
@@ -12,6 +13,7 @@ from app.schemas.sun import (
     SolarPositionResponse,
     MeasurementRequest,
     MeasurementResponse,
+    StatsResponse,
 )
 from app.services.astronomy import calculate_sun_position
 from app.services.measurement import (
@@ -101,3 +103,54 @@ def get_measurements(
     Returns measurements ordered by created_at descending (most recent first).
     """
     return service.get_measurements_by_date(target_date=target_date, limit=limit)
+
+
+@router.get("/stats", response_model=StatsResponse)
+def get_stats(
+    target_date: date | None = Query(
+        default=None,
+        description="Date to calculate statistics for (YYYY-MM-DD). Defaults to today.",
+    ),
+    service: MeasurementService = Depends(get_measurement_service),
+) -> StatsResponse:
+    """
+    Get statistics for measurements on a specific date.
+
+    - **target_date**: Date to calculate stats for (defaults to today)
+
+    Returns:
+    - **count**: Total number of measurements
+    - **avg_delta_azimuth**: Average azimuth delta (device - NASA)
+    - **avg_delta_altitude**: Average altitude delta (device - NASA)
+    - **std_dev_azimuth**: Standard deviation of azimuth deltas
+    - **std_dev_altitude**: Standard deviation of altitude deltas
+    """
+    return service.get_stats_by_date(target_date=target_date)
+
+
+@router.get("/export")
+def export_csv(
+    target_date: date | None = Query(
+        default=None,
+        description="Date to export (YYYY-MM-DD). Defaults to today.",
+    ),
+    service: MeasurementService = Depends(get_measurement_service),
+) -> StreamingResponse:
+    """
+    Export measurements as a CSV file.
+
+    - **target_date**: Date to export (defaults to today)
+
+    Returns a downloadable CSV file with all measurements for the specified date.
+    """
+    csv_content = service.export_csv_by_date(target_date=target_date)
+
+    # Format filename with date
+    export_date = target_date or date.today()
+    filename = f"helios_data_{export_date}.csv"
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
