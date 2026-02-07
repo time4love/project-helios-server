@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, Float, DateTime
+from sqlalchemy import Column, Integer, Float, DateTime, String
 from app.core.database import Base
 
 
@@ -14,6 +14,9 @@ class Measurement(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Anonymous device identifier for rate limiting
+    device_id = Column(String, index=True, nullable=True)
 
     # Location where measurement was taken
     latitude = Column(Float, nullable=False)
@@ -32,4 +35,4 @@ class Measurement(Base):
     delta_altitude = Column(Float, nullable=False)
 
     def __repr__(self):
-        return f"<Measurement(id={self.id}, lat={self.latitude}, lon={self.longitude}, delta_az={self.delta_azimuth}, delta_alt={self.delta_altitude})>"
+        return f"<Measurement(id={self.id}, device_id={self.device_id}, lat={self.latitude}, lon={self.longitude})>"

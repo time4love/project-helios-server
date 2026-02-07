@@ -1,9 +1,10 @@
 """Solar position calculation endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db, SessionLocal
+from app.core.database import get_db
 from app.models.measurement import Measurement
 from app.schemas.sun import (
     SolarPositionRequest,
@@ -14,6 +15,9 @@ from app.schemas.sun import (
 from app.services.astronomy import calculate_sun_position
 
 router = APIRouter()
+
+# Rate limit: minimum seconds between measurements per device
+RATE_LIMIT_SECONDS = 10
 
 
 @router.post("/calculate", response_model=SolarPositionResponse)
@@ -42,11 +46,37 @@ def save_measurement(request: MeasurementRequest, db: Session = Depends(get_db))
 
     - **latitude/longitude**: Location where measurement was taken
     - **device_azimuth/device_altitude**: What the device sensors reported
+    - **device_id**: Anonymous device identifier for rate limiting
     - **timestamp**: Optional datetime (defaults to current UTC time)
 
     Calculates the NASA/Pysolar sun position, computes deltas, and saves to database.
     Returns the full measurement record including the database ID.
+
+    Rate limited to one measurement per device every 10 seconds.
     """
+    # Rate limiting: Check for recent measurements from this device
+    last_measurement = (
+        db.query(Measurement)
+        .filter(Measurement.device_id == request.device_id)
+        .order_by(Measurement.created_at.desc())
+        .first()
+    )
+
+    if last_measurement:
+        now = datetime.now(timezone.utc)
+        # Handle timezone-naive datetime from DB
+        last_time = last_measurement.created_at
+        if last_time.tzinfo is None:
+            last_time = last_time.replace(tzinfo=timezone.utc)
+
+        time_diff = (now - last_time).total_seconds()
+
+        if time_diff < RATE_LIMIT_SECONDS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded. Please wait {int(RATE_LIMIT_SECONDS - time_diff)} seconds.",
+            )
+
     # Calculate the actual sun position using Pysolar
     sun_position = calculate_sun_position(
         lat=request.latitude,
@@ -58,8 +88,9 @@ def save_measurement(request: MeasurementRequest, db: Session = Depends(get_db))
     delta_azimuth = request.device_azimuth - sun_position["azimuth"]
     delta_altitude = request.device_altitude - sun_position["altitude"]
 
-    # Create measurement record
+    # Create measurement record with device_id
     measurement = Measurement(
+        device_id=request.device_id,
         latitude=request.latitude,
         longitude=request.longitude,
         device_azimuth=request.device_azimuth,
