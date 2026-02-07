@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.endpoints import solar
 from app.core.config import APP_NAME, APP_VERSION, API_V1_PREFIX
-from app.core.database import engine
+from app.core.database import supabase
 
 app = FastAPI(
     title=APP_NAME,
@@ -39,7 +39,7 @@ def root():
 @app.get("/health")
 def health_check():
     """Detailed health check including database status."""
-    db_status = "connected" if engine is not None else "not configured"
+    db_status = "connected" if supabase is not None else "not configured"
     return {
         "status": "healthy",
         "database": db_status,

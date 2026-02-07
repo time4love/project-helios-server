@@ -2,10 +2,9 @@
 
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from supabase import Client
 
-from app.core.database import get_db
-from app.models.measurement import Measurement
+from app.core.database import get_supabase
 from app.schemas.sun import (
     SolarPositionRequest,
     SolarPositionResponse,
@@ -40,7 +39,10 @@ def calculate_solar_position(request: SolarPositionRequest) -> SolarPositionResp
 
 
 @router.post("/measure", response_model=MeasurementResponse)
-def save_measurement(request: MeasurementRequest, db: Session = Depends(get_db)) -> MeasurementResponse:
+def save_measurement(
+    request: MeasurementRequest,
+    supabase: Client = Depends(get_supabase)
+) -> MeasurementResponse:
     """
     Save a measurement comparing device sensor data with calculated sun position.
 
@@ -54,21 +56,22 @@ def save_measurement(request: MeasurementRequest, db: Session = Depends(get_db))
 
     Rate limited to one measurement per device every 10 seconds.
     """
+    now = datetime.now(timezone.utc)
+
     # Rate limiting: Check for recent measurements from this device
-    last_measurement = (
-        db.query(Measurement)
-        .filter(Measurement.device_id == request.device_id)
-        .order_by(Measurement.created_at.desc())
-        .first()
+    rate_limit_response = (
+        supabase.table("measurements")
+        .select("created_at")
+        .eq("device_id", request.device_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
     )
 
-    if last_measurement:
-        now = datetime.now(timezone.utc)
-        # Handle timezone-naive datetime from DB
-        last_time = last_measurement.created_at
-        if last_time.tzinfo is None:
-            last_time = last_time.replace(tzinfo=timezone.utc)
-
+    if rate_limit_response.data:
+        last_time_str = rate_limit_response.data[0]["created_at"]
+        # Parse ISO format timestamp from Supabase
+        last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
         time_diff = (now - last_time).total_seconds()
 
         if time_diff < RATE_LIMIT_SECONDS:
@@ -88,22 +91,43 @@ def save_measurement(request: MeasurementRequest, db: Session = Depends(get_db))
     delta_azimuth = request.device_azimuth - sun_position["azimuth"]
     delta_altitude = request.device_altitude - sun_position["altitude"]
 
-    # Create measurement record with device_id
-    measurement = Measurement(
-        device_id=request.device_id,
-        latitude=request.latitude,
-        longitude=request.longitude,
-        device_azimuth=request.device_azimuth,
-        device_altitude=request.device_altitude,
-        nasa_azimuth=sun_position["azimuth"],
-        nasa_altitude=sun_position["altitude"],
-        delta_azimuth=delta_azimuth,
-        delta_altitude=delta_altitude,
+    # Prepare measurement record
+    measurement_data = {
+        "device_id": request.device_id,
+        "latitude": request.latitude,
+        "longitude": request.longitude,
+        "device_azimuth": request.device_azimuth,
+        "device_altitude": request.device_altitude,
+        "nasa_azimuth": sun_position["azimuth"],
+        "nasa_altitude": sun_position["altitude"],
+        "delta_azimuth": delta_azimuth,
+        "delta_altitude": delta_altitude,
+    }
+
+    # Save to Supabase via REST API
+    insert_response = (
+        supabase.table("measurements")
+        .insert(measurement_data)
+        .execute()
     )
 
-    # Save to database
-    db.add(measurement)
-    db.commit()
-    db.refresh(measurement)
+    if not insert_response.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save measurement",
+        )
 
-    return MeasurementResponse.model_validate(measurement)
+    # Return the saved record
+    saved = insert_response.data[0]
+    return MeasurementResponse(
+        id=saved["id"],
+        created_at=saved["created_at"],
+        latitude=saved["latitude"],
+        longitude=saved["longitude"],
+        device_azimuth=saved["device_azimuth"],
+        device_altitude=saved["device_altitude"],
+        nasa_azimuth=saved["nasa_azimuth"],
+        nasa_altitude=saved["nasa_altitude"],
+        delta_azimuth=saved["delta_azimuth"],
+        delta_altitude=saved["delta_altitude"],
+    )

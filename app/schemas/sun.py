@@ -42,7 +42,7 @@ class MeasurementResponse(BaseModel):
     """Response model with full measurement data including saved ID."""
 
     id: int = Field(..., description="Database ID of the saved measurement")
-    created_at: datetime = Field(..., description="Timestamp when measurement was saved")
+    created_at: str = Field(..., description="Timestamp when measurement was saved (ISO format)")
 
     # Location
     latitude: float
@@ -59,6 +59,3 @@ class MeasurementResponse(BaseModel):
     # Deltas (device - nasa)
     delta_azimuth: float
     delta_altitude: float
-
-    class Config:
-        from_attributes = True  # Allows creating from ORM model
