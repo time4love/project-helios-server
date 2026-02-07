@@ -1,7 +1,8 @@
 """Solar position calculation endpoints."""
 
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import List
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
 
@@ -13,11 +14,20 @@ from app.schemas.sun import (
     MeasurementResponse,
 )
 from app.services.astronomy import calculate_sun_position
+from app.services.measurement import (
+    MeasurementService,
+    RateLimitExceeded,
+    MeasurementSaveFailed,
+)
 
 router = APIRouter()
 
-# Rate limit: minimum seconds between measurements per device
-RATE_LIMIT_SECONDS = 10
+
+def get_measurement_service(
+    supabase: Client = Depends(get_supabase),
+) -> MeasurementService:
+    """Dependency injection for MeasurementService."""
+    return MeasurementService(supabase)
 
 
 @router.post("/calculate", response_model=SolarPositionResponse)
@@ -42,7 +52,7 @@ def calculate_solar_position(request: SolarPositionRequest) -> SolarPositionResp
 @router.post("/measure", response_model=MeasurementResponse)
 def save_measurement(
     request: MeasurementRequest,
-    supabase: Client = Depends(get_supabase)
+    service: MeasurementService = Depends(get_measurement_service),
 ) -> MeasurementResponse:
     """
     Save a measurement comparing device sensor data with calculated sun position.
@@ -57,92 +67,30 @@ def save_measurement(
 
     Rate limited to one measurement per device every 10 seconds.
     """
-    now = datetime.now(timezone.utc)
-
-    # Rate limiting: Check for recent measurements from this device
-    rate_limit_response = (
-        supabase.table("measurements")
-        .select("created_at")
-        .eq("device_id", request.device_id)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-
-    if rate_limit_response.data:
-        last_time_str = rate_limit_response.data[0]["created_at"]
-        # Parse ISO format timestamp from Supabase
-        last_time = datetime.fromisoformat(last_time_str.replace("Z", "+00:00"))
-        time_diff = (now - last_time).total_seconds()
-
-        if time_diff < RATE_LIMIT_SECONDS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Please wait {int(RATE_LIMIT_SECONDS - time_diff)} seconds.",
-            )
-
-    # Calculate the actual sun position using Pysolar
-    sun_position = calculate_sun_position(
-        lat=request.latitude,
-        lon=request.longitude,
-        dt=request.timestamp,
-    )
-
-    # Calculate deltas (device reading - calculated position)
-    delta_azimuth = request.device_azimuth - sun_position["azimuth"]
-    delta_altitude = request.device_altitude - sun_position["altitude"]
-
-    # Prepare measurement record
-    measurement_data = {
-        "device_id": request.device_id,
-        "latitude": request.latitude,
-        "longitude": request.longitude,
-        "device_azimuth": request.device_azimuth,
-        "device_altitude": request.device_altitude,
-        "nasa_azimuth": sun_position["azimuth"],
-        "nasa_altitude": sun_position["altitude"],
-        "delta_azimuth": delta_azimuth,
-        "delta_altitude": delta_altitude,
-    }
-
-    # Save to Supabase via REST API
-    insert_response = (
-        supabase.table("measurements")
-        .insert(measurement_data)
-        .execute()
-    )
-
-    if not insert_response.data:
+    try:
+        return service.create_measurement(request)
+    except RateLimitExceeded as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Rate limit exceeded. Please wait {e.wait_seconds} seconds.",
+        )
+    except MeasurementSaveFailed:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to save measurement",
         )
-
-    # Return the saved record
-    saved = insert_response.data[0]
-    return MeasurementResponse(
-        id=saved["id"],
-        created_at=saved["created_at"],
-        device_id=saved.get("device_id"),
-        latitude=saved["latitude"],
-        longitude=saved["longitude"],
-        device_azimuth=saved["device_azimuth"],
-        device_altitude=saved["device_altitude"],
-        nasa_azimuth=saved["nasa_azimuth"],
-        nasa_altitude=saved["nasa_altitude"],
-        delta_azimuth=saved["delta_azimuth"],
-        delta_altitude=saved["delta_altitude"],
-    )
 
 
 @router.get("/measurements", response_model=List[MeasurementResponse])
 def get_measurements(
     target_date: date | None = Query(
         default=None,
-        description="Filter measurements by date (YYYY-MM-DD). Defaults to today if not provided."
+        description="Filter measurements by date (YYYY-MM-DD). Defaults to today if not provided.",
     ),
-    limit: int = Query(default=5000, ge=1, le=5000, description="Max number of measurements to return"),
-    supabase: Client = Depends(get_supabase)
+    limit: int = Query(
+        default=5000, ge=1, le=5000, description="Max number of measurements to return"
+    ),
+    service: MeasurementService = Depends(get_measurement_service),
 ) -> List[MeasurementResponse]:
     """
     Retrieve measurements for visualization, filtered by date.
@@ -152,36 +100,4 @@ def get_measurements(
 
     Returns measurements ordered by created_at descending (most recent first).
     """
-    # Default to today if no date provided
-    filter_date = target_date or date.today()
-
-    # Calculate date range for the target day (start of day to end of day)
-    start_of_day = f"{filter_date}T00:00:00Z"
-    end_of_day = f"{filter_date}T23:59:59.999999Z"
-
-    response = (
-        supabase.table("measurements")
-        .select("*")
-        .gte("created_at", start_of_day)
-        .lte("created_at", end_of_day)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-
-    return [
-        MeasurementResponse(
-            id=row["id"],
-            created_at=row["created_at"],
-            device_id=row.get("device_id"),
-            latitude=row["latitude"],
-            longitude=row["longitude"],
-            device_azimuth=row["device_azimuth"],
-            device_altitude=row["device_altitude"],
-            nasa_azimuth=row["nasa_azimuth"],
-            nasa_altitude=row["nasa_altitude"],
-            delta_azimuth=row["delta_azimuth"],
-            delta_altitude=row["delta_altitude"],
-        )
-        for row in response.data
-    ]
+    return service.get_measurements_by_date(target_date=target_date, limit=limit)
