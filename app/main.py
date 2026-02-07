@@ -5,21 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.endpoints import solar
 from app.core.config import APP_NAME, APP_VERSION, API_V1_PREFIX
-from app.core.database import engine, Base
-
-# Import models to register them with SQLAlchemy
-from app.models import measurement  # noqa: F401
+from app.core.database import engine
 
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
     description="Backend API for Project Helios - Solar position calculations",
 )
-
-# Create database tables if they don't exist
-# Note: In production, use Alembic migrations instead
-if engine is not None:
-    Base.metadata.create_all(bind=engine)
 
 # CORS middleware - allow all origins for development
 app.add_middleware(
