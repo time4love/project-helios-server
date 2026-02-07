@@ -1,6 +1,6 @@
 """Solar position calculation endpoints."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from supabase import Client
@@ -137,19 +137,33 @@ def save_measurement(
 
 @router.get("/measurements", response_model=List[MeasurementResponse])
 def get_measurements(
-    limit: int = Query(default=100, ge=1, le=1000, description="Max number of measurements to return"),
+    target_date: date | None = Query(
+        default=None,
+        description="Filter measurements by date (YYYY-MM-DD). Defaults to today if not provided."
+    ),
+    limit: int = Query(default=5000, ge=1, le=5000, description="Max number of measurements to return"),
     supabase: Client = Depends(get_supabase)
 ) -> List[MeasurementResponse]:
     """
-    Retrieve recent measurements for visualization.
+    Retrieve measurements for visualization, filtered by date.
 
-    - **limit**: Maximum number of measurements to return (default: 100, max: 1000)
+    - **target_date**: Date to filter measurements (defaults to today's date)
+    - **limit**: Maximum number of measurements to return (default: 5000, max: 5000)
 
     Returns measurements ordered by created_at descending (most recent first).
     """
+    # Default to today if no date provided
+    filter_date = target_date or date.today()
+
+    # Calculate date range for the target day (start of day to end of day)
+    start_of_day = f"{filter_date}T00:00:00Z"
+    end_of_day = f"{filter_date}T23:59:59.999999Z"
+
     response = (
         supabase.table("measurements")
         .select("*")
+        .gte("created_at", start_of_day)
+        .lte("created_at", end_of_day)
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
