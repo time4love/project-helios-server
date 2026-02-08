@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.endpoints import solar
+from app.api.endpoints import solar, verdict
 from app.core.config import APP_NAME, APP_VERSION, API_V1_PREFIX
 from app.core.database import supabase
 
@@ -27,6 +27,12 @@ app.include_router(
     solar.router,
     prefix=f"{API_V1_PREFIX}/solar",
     tags=["Solar"],
+)
+
+app.include_router(
+    verdict.router,
+    prefix=f"{API_V1_PREFIX}/verdict",
+    tags=["Verdict"],
 )
 
 
