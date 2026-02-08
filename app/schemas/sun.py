@@ -42,6 +42,10 @@ class MeasurementRequest(BaseModel):
         default=None,
         description="Magnetic declination applied (positive = east, negative = west)",
     )
+    collection_method: str | None = Field(
+        default=None,
+        description="Method used to collect the measurement: 'SHADOW' or 'CAMERA'",
+    )
     timestamp: datetime | None = Field(
         default=None,
         description="Timestamp for calculation (defaults to current UTC time)",
@@ -66,6 +70,11 @@ class MeasurementResponse(BaseModel):
     # Raw magnetic readings (before declination correction)
     magnetic_azimuth: float | None = None
     magnetic_declination: float | None = None
+
+    # Collection method
+    collection_method: str | None = Field(
+        None, description="Method used: 'SHADOW' or 'CAMERA'"
+    )
 
     # Calculated NASA/Pysolar values
     nasa_azimuth: float
