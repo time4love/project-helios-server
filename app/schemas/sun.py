@@ -75,6 +75,13 @@ class MeasurementResponse(BaseModel):
     delta_azimuth: float
     delta_altitude: float
 
+    # Flat Earth triangulation test
+    flat_earth_sun_height_km: float | None = Field(
+        None,
+        description="Calculated sun height (km) assuming flat Earth model. "
+        "Consistent values would support flat Earth; high variance supports globe.",
+    )
+
 
 class StatsResponse(BaseModel):
     """Response model for measurement statistics."""
@@ -91,4 +98,20 @@ class StatsResponse(BaseModel):
     )
     std_dev_altitude: float | None = Field(
         None, description="Standard deviation of delta altitude"
+    )
+
+    # Flat Earth triangulation statistics
+    flat_earth_samples: int | None = Field(
+        None, description="Number of samples with valid flat Earth height calculation"
+    )
+    avg_flat_earth_sun_height_km: float | None = Field(
+        None,
+        description="Average calculated sun height (km) assuming flat Earth. "
+        "Real sun is ~150M km away; flat Earth model claims ~5000 km.",
+    )
+    std_dev_flat_earth_sun_height_km: float | None = Field(
+        None,
+        description="Standard deviation of flat Earth sun height. "
+        "Low value = consistent (flat Earth prediction). "
+        "High value = inconsistent (globe prediction).",
     )

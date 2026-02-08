@@ -9,7 +9,10 @@ from typing import List
 from supabase import Client
 
 from app.schemas.sun import MeasurementRequest, MeasurementResponse, StatsResponse
-from app.services.astronomy import calculate_sun_position
+from app.services.astronomy import (
+    calculate_sun_position,
+    calculate_flat_earth_sun_height,
+)
 
 
 class RateLimitExceeded(Exception):
@@ -42,6 +45,7 @@ def _row_to_response(row: dict) -> MeasurementResponse:
         nasa_altitude=row["nasa_altitude"],
         delta_azimuth=row["delta_azimuth"],
         delta_altitude=row["delta_altitude"],
+        flat_earth_sun_height_km=row.get("flat_earth_sun_height_km"),
     )
 
 
@@ -137,6 +141,15 @@ class MeasurementService:
         delta_azimuth = request.device_azimuth - sun_position["azimuth"]
         delta_altitude = request.device_altitude - sun_position["altitude"]
 
+        # Calculate flat Earth sun height (triangulation test)
+        # Uses device_altitude (observed angle) and distance to sub-solar point
+        flat_earth_height = calculate_flat_earth_sun_height(
+            user_lat=request.latitude,
+            user_lon=request.longitude,
+            device_altitude=request.device_altitude,
+            dt=request.timestamp,
+        )
+
         # Prepare measurement record
         measurement_data = {
             "device_id": request.device_id,
@@ -150,6 +163,7 @@ class MeasurementService:
             "nasa_altitude": sun_position["altitude"],
             "delta_azimuth": delta_azimuth,
             "delta_altitude": delta_altitude,
+            "flat_earth_sun_height_km": flat_earth_height,
         }
 
         # Save to Supabase via REST API
@@ -203,7 +217,8 @@ class MeasurementService:
             target_date: Date to calculate stats for (defaults to today)
 
         Returns:
-            Statistics including count, averages, and standard deviations
+            Statistics including count, averages, standard deviations,
+            and flat Earth triangulation results
         """
         filter_date = target_date or date.today()
 
@@ -212,7 +227,7 @@ class MeasurementService:
 
         response = (
             self.supabase.table("measurements")
-            .select("delta_azimuth, delta_altitude")
+            .select("delta_azimuth, delta_altitude, flat_earth_sun_height_km")
             .gte("created_at", start_of_day)
             .lte("created_at", end_of_day)
             .execute()
@@ -228,6 +243,9 @@ class MeasurementService:
                 avg_delta_altitude=None,
                 std_dev_azimuth=None,
                 std_dev_altitude=None,
+                flat_earth_samples=None,
+                avg_flat_earth_sun_height_km=None,
+                std_dev_flat_earth_sun_height_km=None,
             )
 
         delta_azimuths = [row["delta_azimuth"] for row in rows]
@@ -240,12 +258,34 @@ class MeasurementService:
         std_az = statistics.stdev(delta_azimuths) if count >= 2 else 0.0
         std_alt = statistics.stdev(delta_altitudes) if count >= 2 else 0.0
 
+        # Flat Earth triangulation statistics
+        # Filter out None values (measurements where altitude was too low)
+        flat_earth_heights = [
+            row["flat_earth_sun_height_km"]
+            for row in rows
+            if row.get("flat_earth_sun_height_km") is not None
+        ]
+        flat_earth_count = len(flat_earth_heights)
+
+        avg_flat_earth = None
+        std_flat_earth = None
+
+        if flat_earth_count > 0:
+            avg_flat_earth = round(statistics.mean(flat_earth_heights), 2)
+            if flat_earth_count >= 2:
+                std_flat_earth = round(statistics.stdev(flat_earth_heights), 2)
+            else:
+                std_flat_earth = 0.0
+
         return StatsResponse(
             count=count,
             avg_delta_azimuth=round(avg_az, 4),
             avg_delta_altitude=round(avg_alt, 4),
             std_dev_azimuth=round(std_az, 4),
             std_dev_altitude=round(std_alt, 4),
+            flat_earth_samples=flat_earth_count if flat_earth_count > 0 else None,
+            avg_flat_earth_sun_height_km=avg_flat_earth,
+            std_dev_flat_earth_sun_height_km=std_flat_earth,
         )
 
     def export_csv_by_date(self, target_date: date | None = None) -> str:
@@ -278,6 +318,7 @@ class MeasurementService:
             "nasa_altitude",
             "delta_azimuth",
             "delta_altitude",
+            "flat_earth_sun_height_km",
         ])
 
         # Data rows
@@ -296,6 +337,7 @@ class MeasurementService:
                 m.nasa_altitude,
                 m.delta_azimuth,
                 m.delta_altitude,
+                m.flat_earth_sun_height_km if m.flat_earth_sun_height_km is not None else "",
             ])
 
         return output.getvalue()
