@@ -1,5 +1,6 @@
 """Solar position calculation endpoints."""
 
+import logging
 from datetime import date
 from typing import List
 
@@ -8,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from supabase import Client
 
 from app.core.database import get_supabase
+from app.core.redis_client import check_rate_limit
 from app.schemas.sun import (
     SolarPositionRequest,
     SolarPositionResponse,
@@ -18,9 +20,13 @@ from app.schemas.sun import (
 from app.services.astronomy import calculate_sun_position
 from app.services.measurement import (
     MeasurementService,
-    RateLimitExceeded,
     MeasurementSaveFailed,
 )
+
+logger = logging.getLogger(__name__)
+
+# Rate limit TTL in seconds
+RATE_LIMIT_TTL = 10
 
 router = APIRouter()
 
@@ -52,7 +58,7 @@ def calculate_solar_position(request: SolarPositionRequest) -> SolarPositionResp
 
 
 @router.post("/measure", response_model=MeasurementResponse)
-def save_measurement(
+async def save_measurement(
     request: MeasurementRequest,
     service: MeasurementService = Depends(get_measurement_service),
 ) -> MeasurementResponse:
@@ -67,15 +73,20 @@ def save_measurement(
     Calculates the NASA/Pysolar sun position, computes deltas, and saves to database.
     Returns the full measurement record including the database ID.
 
-    Rate limited to one measurement per device every 10 seconds.
+    Rate limited to one measurement per device every 10 seconds (via Redis).
     """
-    try:
-        return service.create_measurement(request)
-    except RateLimitExceeded as e:
+    # Check Redis-based rate limit BEFORE any heavy processing
+    # This prevents spam attacks during slow calculations
+    is_rate_limited = await check_rate_limit(request.device_id, ttl_seconds=RATE_LIMIT_TTL)
+    if is_rate_limited:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Please wait {e.wait_seconds} seconds.",
+            detail=f"Rate limit exceeded. Please wait {RATE_LIMIT_TTL} seconds.",
         )
+
+    try:
+        # Create measurement (no longer checks rate limit internally)
+        return service.create_measurement_without_rate_check(request)
     except MeasurementSaveFailed:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

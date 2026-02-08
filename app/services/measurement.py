@@ -91,7 +91,7 @@ class MeasurementService:
 
     def create_measurement(self, request: MeasurementRequest) -> MeasurementResponse:
         """
-        Create a new measurement.
+        Create a new measurement with SQL-based rate limiting (legacy).
 
         Calculates sun position, computes deltas, and saves to database.
 
@@ -105,9 +105,27 @@ class MeasurementService:
             RateLimitExceeded: If the device is rate limited
             MeasurementSaveFailed: If the database insert fails
         """
-        # Check rate limit first
+        # Check rate limit first (legacy SQL-based check)
         self.check_rate_limit(request.device_id)
+        return self.create_measurement_without_rate_check(request)
 
+    def create_measurement_without_rate_check(
+        self, request: MeasurementRequest
+    ) -> MeasurementResponse:
+        """
+        Create a new measurement without rate limiting check.
+
+        Used when rate limiting is handled externally (e.g., Redis).
+
+        Args:
+            request: Measurement request with device sensor data
+
+        Returns:
+            The saved measurement record
+
+        Raises:
+            MeasurementSaveFailed: If the database insert fails
+        """
         # Calculate the actual sun position using Pysolar
         sun_position = calculate_sun_position(
             lat=request.latitude,

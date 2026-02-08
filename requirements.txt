@@ -3,3 +3,4 @@ uvicorn
 pysolar
 pytz
 supabase
+upstash-redis
